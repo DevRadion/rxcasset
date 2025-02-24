@@ -13,7 +13,7 @@ pub fn findReferences(allocator: Allocator, name: []const u8, proj_dir: fs.Dir) 
 
     while (try walker.next()) |entry| {
         // Entry must be a file with proper extension (goto checkExtension)
-        if (entry.kind != .file and !checkExtension(entry.path)) continue;
+        if (entry.kind != .file or !checkExtension(entry.path)) continue;
 
         const asset_reference = try checkAssetRefs(
             allocator,
