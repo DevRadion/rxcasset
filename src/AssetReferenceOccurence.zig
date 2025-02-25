@@ -23,5 +23,5 @@ pub fn init(
 }
 
 pub fn deinit(self: *const Self) void {
-    self.*.allocator.free(self.*.line_content);
+    self.allocator.free(self.line_content);
 }

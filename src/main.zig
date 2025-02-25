@@ -4,6 +4,8 @@ const finder = @import("asset_finder.zig");
 const AssetReference = @import("AssetReference.zig");
 const renamer = @import("asset_renamer.zig");
 const Arguments = @import("Arguments.zig");
+const catalog_parser = @import("catalog_parser.zig");
+const image_sync = @import("image_sync.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -14,39 +16,55 @@ pub fn main() !void {
     const argv = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, argv);
 
-    if (argv.len < 7) {
-        std.debug.print("Add some arguments pls\n", .{});
-        return;
-    }
-
     var arguments = try Arguments.parse(
         allocator,
         argv,
     );
     defer arguments.deinit();
 
+    if (!validateArguments(arguments)) return;
+
     printArguments(arguments);
 
+    if (arguments.is_asset_sync == true) {
+        const path = arguments.xcassets_path orelse return;
+        try performAssetSync(allocator, path);
+    } else if (arguments.is_reference_replacement == true) {
+        const path = arguments.project_path orelse return;
+        try performReferenceReplacement(
+            allocator,
+            path,
+            arguments.asset_name.?,
+            arguments.asset_new_name,
+        );
+    }
+}
+
+fn performAssetSync(allocator: std.mem.Allocator, xcassets_path: []u8) !void {
+    const dir = try std.fs.openDirAbsolute(xcassets_path, .{ .iterate = true });
+    const assets = try catalog_parser.parseCatalog(allocator, dir);
+    defer {
+        for (assets) |asset| {
+            asset.deinit(allocator);
+        }
+        allocator.free(assets);
+    }
+
+    try image_sync.syncImageSets(allocator, assets);
+}
+
+fn performReferenceReplacement(allocator: std.mem.Allocator, project_path: []u8, old: []u8, new: ?[]u8) !void {
     var c = chameleon.initRuntime(.{ .allocator = allocator });
     defer c.deinit();
-
-    const project_path = arguments.project_path orelse {
-        std.debug.print("Project path is null\n", .{});
-        return;
-    };
 
     const proj_dir = try std.fs.openDirAbsolute(
         project_path,
         .{ .iterate = true },
     );
 
-    const asset_name = arguments.asset_name orelse {
-        std.debug.print("Asset name is null\n", .{});
-        return;
-    };
     const references = try finder.findReferences(
         allocator,
-        asset_name,
+        old,
         proj_dir,
     );
     defer {
@@ -60,8 +78,8 @@ pub fn main() !void {
         try printAssetReference(&c, reference);
     }
 
-    const asset_new_name = arguments.asset_new_name orelse {
-        std.debug.print("New asset name is null\n", .{});
+    const asset_new_name = new orelse {
+        std.debug.print("For replacement - add -new param with new asset name\n", .{});
         return;
     };
 
@@ -76,14 +94,63 @@ pub fn main() !void {
     }
 }
 
+fn validateArguments(arguments: Arguments) bool {
+    if (arguments.is_asset_sync == true and arguments.is_reference_replacement == true) {
+        std.debug.print("ERROR: You must specify only one operation type per execution\n", .{});
+        return false;
+    }
+
+    if (arguments.is_asset_sync == true) {
+        // Program that runned with "-sync" param, must have "-xcassets" path
+        const is_have_xcassets_path = arguments.xcassets_path != null;
+
+        if (!is_have_xcassets_path) {
+            std.debug.print("ERROR: Add -xcassets path\n", .{});
+        }
+
+        return is_have_xcassets_path;
+    }
+
+    if (arguments.is_reference_replacement == true) {
+        // Program that runned with "-replace" param, must have at least "-old" asset name for search
+        // and project path "-project" param
+
+        // Program that runned without "-new" asset name param - just show references without replacement
+
+        const is_have_project_path = arguments.project_path != null;
+        if (!is_have_project_path) {
+            std.debug.print("ERROR: Add -project path\n", .{});
+            return false;
+        }
+
+        const is_have_old_name = arguments.asset_name != null;
+        if (!is_have_old_name) {
+            std.debug.print("ERROR: Add -old asset name\n", .{});
+            return false;
+        }
+
+        return is_have_project_path and is_have_old_name;
+    }
+
+    std.debug.print("ERROR: You must specify type of operation: -sync or -replace\n", .{});
+    return false;
+}
+
 fn printArguments(arguments: Arguments) void {
-    std.debug.print("Path: {?s}\n", .{arguments.project_path});
-    std.debug.print("Asset: {?s}\n", .{arguments.asset_name});
-    std.debug.print("Asset new name: {?s}\n\n", .{arguments.asset_new_name});
+    if (arguments.is_asset_sync == true) {
+        std.debug.print("XCAssets path: {?s}\n", .{arguments.xcassets_path});
+        std.debug.print("Asset sync: true\n\n", .{});
+    }
+
+    if (arguments.is_reference_replacement == true) {
+        std.debug.print("Path: {?s}\n", .{arguments.project_path});
+        std.debug.print("Asset: {?s}\n", .{arguments.asset_name});
+        std.debug.print("Asset new name: {?s}\n\n", .{arguments.asset_new_name});
+    }
 }
 
 fn getUserAgreement() bool {
-    std.debug.print("Perform changes? (y/n): ", .{});
+    std.debug.print("Perform changes? (y/N): ", .{});
 
     const stdin = std.io.getStdIn();
     defer stdin.close();

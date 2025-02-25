@@ -18,11 +18,11 @@ pub fn init(allocator: std.mem.Allocator, path: []u8, asset_name: []const u8, oc
 }
 
 pub fn deinit(self: *const Self) void {
-    for (self.*.occurences) |occur| {
+    for (self.occurences) |occur| {
         occur.deinit();
     }
 
-    self.*.allocator.free(self.*.path);
-    self.*.allocator.free(self.*.asset_name);
-    self.*.allocator.free(self.*.occurences);
+    self.allocator.free(self.path);
+    self.allocator.free(self.asset_name);
+    self.allocator.free(self.occurences);
 }
